@@ -1,0 +1,49 @@
+[package]
+name = "richness-win11"
+version = "0.1.0"
+edition = "2021"
+description = "Hardware communication demo tool (RS-485 / USB / RJ45)"
+authors = ["rex4ssd"]
+
+[lib]
+name = "richness_win11_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# ── Tauri core ──────────────────────────────────────────────────────────────
+tauri        = { version = "2", features = [] }
+
+# ── Async runtime ────────────────────────────────────────────────────────────
+tokio        = { version = "1", features = ["full"] }
+
+# ── Hardware ─────────────────────────────────────────────────────────────────
+# RS-485 / serial
+serialport   = "4"
+# USB bulk I/O — vendored libusb so CI doesn't need external install
+rusb         = { version = "0.9", features = ["vendored"] }
+
+# ── Serialisation ────────────────────────────────────────────────────────────
+serde        = { version = "1", features = ["derive"] }
+serde_json   = "1"
+
+# ── Error handling ───────────────────────────────────────────────────────────
+thiserror    = "1"
+anyhow       = "1"
+
+# ── Logging ──────────────────────────────────────────────────────────────────
+tracing             = "0.1"
+tracing-subscriber  = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-appender    = "0.2"
+
+# ── Utilities ────────────────────────────────────────────────────────────────
+chrono       = { version = "0.4", features = ["serde"] }
+uuid         = { version = "1", features = ["v4"] }
+
+[profile.release]
+opt-level   = 3
+lto         = true
+codegen-units = 1
+strip       = true
