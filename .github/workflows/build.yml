@@ -26,7 +26,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          # cache: "npm" requires package-lock.json — always present after first npm install
           cache: "npm"
+          cache-dependency-path: package-lock.json
 
       # ── 3. Rust (stable, MSVC target) ────────────────────────────────────
       - name: Setup Rust stable
@@ -35,6 +37,7 @@ jobs:
           targets: x86_64-pc-windows-msvc
 
       # Cache Cargo registry + build artefacts
+      # Cargo.lock is auto-generated on first build; fall back to registry cache
       - name: Cache Cargo
         uses: actions/cache@v4
         with:
@@ -42,20 +45,23 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             src-tauri/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      # ── 4. libusb via vcpkg (required by rusb) ───────────────────────────
+      # ── 4. libusb via vcpkg (required by rusb vendored feature) ──────────
       # windows-latest already has vcpkg at C:\vcpkg
+      # rusb uses "vendored" feature (compiles libusb from source via cmake),
+      # but we set LIBUSB env vars as fallback for any dynamic linking path.
       - name: Install libusb via vcpkg
         run: |
+          vcpkg integrate install
           vcpkg install libusb:x64-windows-static
-          echo "LIBUSB_DIR=C:\vcpkg\installed\x64-windows-static" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          echo "LIBUSB_STATIC=1" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Add-Content $env:GITHUB_ENV "LIBUSB_DIR=C:\vcpkg\installed\x64-windows-static"
+          Add-Content $env:GITHUB_ENV "VCPKG_ROOT=C:\vcpkg"
 
       # ── 5. Install npm dependencies ──────────────────────────────────────
-      - name: npm install
+      - name: Install npm dependencies
         run: npm ci
 
       # ── 6. Build Tauri app ───────────────────────────────────────────────
