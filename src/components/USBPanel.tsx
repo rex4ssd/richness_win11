@@ -1,6 +1,6 @@
 // USBPanel.tsx — USB control panel with device dropdown
 
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { HwDataEvent, HwLogEvent, UsbDeviceInfo } from "../types";

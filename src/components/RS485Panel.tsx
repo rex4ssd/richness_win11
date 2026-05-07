@@ -1,6 +1,6 @@
 // RS485Panel.tsx — RS-485 control panel
 
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { HwDataEvent, HwLogEvent } from "../types";

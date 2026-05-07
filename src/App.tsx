@@ -2,7 +2,7 @@
 // Three hardware panels side-by-side, each identified by a host_id.
 // Designed for easy N-host expansion: map over a hosts array.
 
-import React, { useState } from "react";
+import { useState } from "react";
 import { RS485Panel } from "./components/RS485Panel";
 import { USBPanel } from "./components/USBPanel";
 import { RJ45Panel } from "./components/RJ45Panel";
