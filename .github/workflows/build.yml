@@ -16,6 +16,8 @@ jobs:
   build-windows:
     name: Build (Windows x64)
     runs-on: windows-latest
+    permissions:
+      contents: write   # 允許建立 GitHub Release 並上傳 assets
 
     steps:
       # ── 0. 環境快照 ──────────────────────────────────────────────────────────
