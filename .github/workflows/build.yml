@@ -1,20 +1,11 @@
 # .github/workflows/build.yml
-#
-# Triggers:
-#   push main   → CI check (cargo check + vite build，快速驗證，不打包)
-#   push v* tag → 完整 Release build → 發佈 .exe
-#   手動        → workflow_dispatch
-#
-# 日常開發：bash release.sh 自動 commit + tag + push，觸發 Release build。
 
 name: Build Windows Installer
 
 on:
   push:
-    branches:
-      - main
-    tags:
-      - "v*"
+    branches: [main]
+    tags:     ["v*"]
   workflow_dispatch:
 
 concurrency:
@@ -30,12 +21,8 @@ jobs:
       # ── 0. 環境快照 ──────────────────────────────────────────────────────────
       - name: Print environment info
         run: |
-          Write-Host "=== Trigger ==="
-          Write-Host "ref      : $env:GITHUB_REF"
-          Write-Host "ref_name : $env:GITHUB_REF_NAME"
-          Write-Host "sha      : $env:GITHUB_SHA"
-          Write-Host "=== Runner OS ==="
-          Write-Host "$([System.Environment]::OSVersion.VersionString)"
+          Write-Host "ref: $env:GITHUB_REF  sha: $env:GITHUB_SHA"
+          Write-Host "OS: $([System.Environment]::OSVersion.VersionString)"
 
       # ── 1. Checkout ──────────────────────────────────────────────────────────
       - name: Checkout code
@@ -49,13 +36,13 @@ jobs:
           cache: "npm"
           cache-dependency-path: package-lock.json
 
-      # ── 3. Rust stable (MSVC) ────────────────────────────────────────────────
+      # ── 3. Rust stable ───────────────────────────────────────────────────────
       - name: Setup Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Print tool versions
+      - name: Print versions
         run: |
           Write-Host "node  $(node --version)"
           Write-Host "npm   $(npm --version)"
@@ -70,29 +57,24 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             src-tauri/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      # ── 4. npm install ────────────────────────────────────────────────────────
+      # ── 4. npm ───────────────────────────────────────────────────────────────
       - name: Install npm dependencies
         run: npm ci
 
-      # ── 5. Vite build（前端 TS 型別也在這裡檢查）─────────────────────────────
-      - name: Vite build
+      # ── 5. Vite build ────────────────────────────────────────────────────────
+      - name: Vite build (tsc + vite)
         run: npm run build
 
-      # ── 6. Cargo check（所有 push 都跑，比 build 快 3-5x，錯誤一眼清楚）──────
-      #   --message-format json-diagnostic-rendered-ansi → 保留顏色 + 完整 span
+      # ── 6. Cargo check — 所有 push 都跑，錯誤清楚顯示 ────────────────────────
+      # rusb vendored 自帶 libusb 源碼，cmake 自動編，不需 vcpkg
       - name: Cargo check
-        run: |
-          cargo check `
-            --manifest-path src-tauri/Cargo.toml `
-            --target x86_64-pc-windows-msvc `
-            --message-format short 2>&1
+        run: cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc --message-format short
 
-      # ── 7. Release build + publish（只在 tag push 時執行）────────────────────
-      #   cargo check 通過才到這步，所以 tauri-action 失敗一定是打包問題而非 Rust
-      - name: Build & Release Tauri (tag only)
+      # ── 7. Release (tag only) ─────────────────────────────────────────────────
+      - name: Build & Release Tauri
         if: startsWith(github.ref, 'refs/tags/')
         uses: tauri-apps/tauri-action@v0
         env:
@@ -102,12 +84,8 @@ jobs:
           releaseName: "richness-win11 ${{ github.ref_name }}"
           releaseBody: |
             ## Hardware Communication Tool — ${{ github.ref_name }}
-
-            ### 下載安裝
-            執行 `richness-win11_x.y.z_x64-setup.exe`（Windows 11, per-user 安裝）
-
-            ### USB 首次設定
-            用 **Zadig** 將目標 USB 設備驅動切換為 WinUSB，詳見 howto.md
+            執行 `richness-win11_x.y.z_x64-setup.exe`（Windows 11）
+            USB 首次設定：用 Zadig 將目標設備驅動切換為 WinUSB
           releaseDraft: false
           prerelease: false
           args: --target x86_64-pc-windows-msvc
