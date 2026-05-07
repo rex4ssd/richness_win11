@@ -1,23 +1,22 @@
 # .github/workflows/build.yml
 #
 # Triggers:
-#   push main   → CI build only (驗證能編過，不發 Release)
-#   push v* tag → CI build + 發佈 GitHub Release (.exe 安裝檔)
+#   push main   → CI check (cargo check + vite build，快速驗證，不打包)
+#   push v* tag → 完整 Release build → 發佈 .exe
 #   手動        → workflow_dispatch
 #
-# 日常開發：bash release.sh 就會自動 commit + tag + push，觸發 Release build。
+# 日常開發：bash release.sh 自動 commit + tag + push，觸發 Release build。
 
 name: Build Windows Installer
 
 on:
   push:
     branches:
-      - main          # 每次 push main：只跑 CI，不發 Release
+      - main
     tags:
-      - "v*"          # 打版本 tag：CI + 發佈 Release
-  workflow_dispatch:  # 手動觸發
+      - "v*"
+  workflow_dispatch:
 
-# 避免同一 branch 同時跑多個 workflow
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -28,53 +27,41 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      # ── 0. 環境資訊（出錯時第一眼就知道版本）───────────────────────────────
+      # ── 0. 環境快照 ──────────────────────────────────────────────────────────
       - name: Print environment info
         run: |
           Write-Host "=== Trigger ==="
           Write-Host "ref      : $env:GITHUB_REF"
           Write-Host "ref_name : $env:GITHUB_REF_NAME"
           Write-Host "sha      : $env:GITHUB_SHA"
-          Write-Host ""
-          Write-Host "=== Runner ==="
-          Write-Host "OS       : $([System.Environment]::OSVersion.VersionString)"
-          Write-Host "CPU      : $env:PROCESSOR_ARCHITECTURE"
-          Write-Host ""
-          Write-Host "=== Tools (pre-installed) ==="
-          node  --version 2>$null || Write-Host "node  : not found"
-          npm   --version 2>$null || Write-Host "npm   : not found"
-          rustc --version 2>$null || Write-Host "rustc : not found"
-          cargo --version 2>$null || Write-Host "cargo : not found"
-          cmake --version 2>$null | Select-Object -First 1 || Write-Host "cmake : not found"
+          Write-Host "=== Runner OS ==="
+          Write-Host "$([System.Environment]::OSVersion.VersionString)"
 
-      # ── 1. Checkout ──────────────────────────────────────────────────────
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # ── 2. Node.js ───────────────────────────────────────────────────────
+      # ── 2. Node.js 22 ────────────────────────────────────────────────────────
       - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: 22          # Node 22 LTS（Node 20 將於 2026-09 移除）
+          node-version: 22
           cache: "npm"
           cache-dependency-path: package-lock.json
 
-      - name: Print Node / npm version
-        run: |
-          node --version
-          npm  --version
-
-      # ── 3. Rust (stable, MSVC target) ────────────────────────────────────
+      # ── 3. Rust stable (MSVC) ────────────────────────────────────────────────
       - name: Setup Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Print Rust / Cargo version
+      - name: Print tool versions
         run: |
-          rustc --version
-          cargo --version
-          rustup show
+          Write-Host "node  $(node --version)"
+          Write-Host "npm   $(npm --version)"
+          Write-Host "rustc $(rustc --version)"
+          Write-Host "cargo $(cargo --version)"
+          cmake --version | Select-Object -First 1
 
       - name: Cache Cargo
         uses: actions/cache@v4
@@ -84,34 +71,27 @@ jobs:
             ~/.cargo/git
             src-tauri/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
+          restore-keys: ${{ runner.os }}-cargo-
 
-      # ── 4. npm install ────────────────────────────────────────────────────
-      # rusb 使用 vendored feature，libusb 自動從源碼編譯（需 cmake，runner 已內建）
+      # ── 4. npm install ────────────────────────────────────────────────────────
       - name: Install npm dependencies
         run: npm ci
 
-      # ── 5. Validate tauri.conf.json schema (快速失敗，不用等全量 build) ──
-      - name: Validate tauri config
-        run: npx @tauri-apps/cli info
-        continue-on-error: true   # 只印資訊，schema 錯誤讓後面 build 步驟明確報
-
-      # ── 6a. CI-only build (push main，非 tag) ─────────────────────────────
-      #   cargo check 比 cargo build 快 3-5x；--message-format=short 讓錯誤一眼清楚
+      # ── 5. Vite build（前端 TS 型別也在這裡檢查）─────────────────────────────
       - name: Vite build
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         run: npm run build
 
-      - name: Cargo check (non-tag push)
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-        run: >
-          cargo check
-          --manifest-path src-tauri/Cargo.toml
-          --target x86_64-pc-windows-msvc
-          --message-format short
+      # ── 6. Cargo check（所有 push 都跑，比 build 快 3-5x，錯誤一眼清楚）──────
+      #   --message-format json-diagnostic-rendered-ansi → 保留顏色 + 完整 span
+      - name: Cargo check
+        run: |
+          cargo check `
+            --manifest-path src-tauri/Cargo.toml `
+            --target x86_64-pc-windows-msvc `
+            --message-format short 2>&1
 
-      # ── 6b. Release build (tag push) ──────────────────────────────────────
+      # ── 7. Release build + publish（只在 tag push 時執行）────────────────────
+      #   cargo check 通過才到這步，所以 tauri-action 失敗一定是打包問題而非 Rust
       - name: Build & Release Tauri (tag only)
         if: startsWith(github.ref, 'refs/tags/')
         uses: tauri-apps/tauri-action@v0
