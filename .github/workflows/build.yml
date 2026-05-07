@@ -1,15 +1,26 @@
 # .github/workflows/build.yml
-# Builds a Windows 11 NSIS installer on every version tag (v*).
-# The resulting .exe is published as a GitHub Release asset.
-# Trigger manually via workflow_dispatch if needed.
+#
+# Triggers:
+#   push main   → CI build only (驗證能編過，不發 Release)
+#   push v* tag → CI build + 發佈 GitHub Release (.exe 安裝檔)
+#   手動        → workflow_dispatch
+#
+# 日常開發：bash release.sh 就會自動 commit + tag + push，觸發 Release build。
 
 name: Build Windows Installer
 
 on:
   push:
+    branches:
+      - main          # 每次 push main：只跑 CI，不發 Release
     tags:
-      - "v*"
-  workflow_dispatch:
+      - "v*"          # 打版本 tag：CI + 發佈 Release
+  workflow_dispatch:  # 手動觸發
+
+# 避免同一 branch 同時跑多個 workflow
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-windows:
@@ -26,7 +37,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          # cache: "npm" requires package-lock.json — always present after first npm install
           cache: "npm"
           cache-dependency-path: package-lock.json
 
@@ -36,8 +46,6 @@ jobs:
         with:
           targets: x86_64-pc-windows-msvc
 
-      # Cache Cargo registry + build artefacts
-      # Cargo.lock is auto-generated on first build; fall back to registry cache
       - name: Cache Cargo
         uses: actions/cache@v4
         with:
@@ -49,10 +57,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      # ── 4. libusb via vcpkg (required by rusb vendored feature) ──────────
-      # windows-latest already has vcpkg at C:\vcpkg
-      # rusb uses "vendored" feature (compiles libusb from source via cmake),
-      # but we set LIBUSB env vars as fallback for any dynamic linking path.
+      # ── 4. libusb via vcpkg ───────────────────────────────────────────────
       - name: Install libusb via vcpkg
         run: |
           vcpkg integrate install
@@ -60,16 +65,24 @@ jobs:
           Add-Content $env:GITHUB_ENV "LIBUSB_DIR=C:\vcpkg\installed\x64-windows-static"
           Add-Content $env:GITHUB_ENV "VCPKG_ROOT=C:\vcpkg"
 
-      # ── 5. Install npm dependencies ──────────────────────────────────────
+      # ── 5. npm install ────────────────────────────────────────────────────
       - name: Install npm dependencies
         run: npm ci
 
-      # ── 6. Build Tauri app ───────────────────────────────────────────────
-      - name: Build Tauri (release)
+      # ── 6a. CI-only build (push main，非 tag) ─────────────────────────────
+      #   只跑 cargo check + vite build，不打包安裝檔，節省 10-15 分鐘
+      - name: CI check (non-tag push)
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          npm run build
+          cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
+
+      # ── 6b. Release build (tag push) ──────────────────────────────────────
+      - name: Build & Release Tauri (tag only)
+        if: startsWith(github.ref, 'refs/tags/')
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Tauri signing — skip for open-source / demo
           TAURI_SIGNING_PRIVATE_KEY: ""
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         with:
@@ -78,12 +91,11 @@ jobs:
           releaseBody: |
             ## Hardware Communication Tool — ${{ github.ref_name }}
 
-            ### Download
-            Install `richness-win11_x.y.z_x64-setup.exe` on Windows 11.
+            ### 下載安裝
+            執行 `richness-win11_x.y.z_x64-setup.exe`（Windows 11, per-user 安裝）
 
-            ### First-time USB setup
-            Run **Zadig** to install WinUSB/libusb driver for your USB device
-            before connecting via the USB panel.
+            ### USB 首次設定
+            用 **Zadig** 將目標 USB 設備驅動切換為 WinUSB，詳見 howto.md
           releaseDraft: false
           prerelease: false
           args: --target x86_64-pc-windows-msvc
