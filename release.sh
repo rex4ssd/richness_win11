@@ -43,8 +43,16 @@ else
 fi
 
 # ── 5. tag + push ─────────────────────────────────────────────────────────────
-git tag "$NEW_TAG"
-git push origin main --tags
+# 若 tag 已存在（同天多次執行），強制覆蓋本地 + remote
+if git rev-parse "$NEW_TAG" >/dev/null 2>&1; then
+  echo "⚠️  Tag $NEW_TAG already exists — force overwriting"
+  git tag -f "$NEW_TAG"
+  git push origin main
+  git push origin "refs/tags/$NEW_TAG" --force
+else
+  git tag "$NEW_TAG"
+  git push origin main --tags
+fi
 
 echo ""
 echo "✅  $NEW_TAG pushed → GitHub Actions building Windows installer..."
